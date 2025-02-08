@@ -1,31 +1,39 @@
-import { useState, useEffect } from "react";
-import { json, ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { useState} from "react";
+import { json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
-import { runQuery } from "../utils/runQuery"; // SQLクエリを実行するAPI関数
-import { getTableInfo } from "../utils/tableInfo"; // テーブル情報を取得するAPI関数
-import { createQuery } from "../utils/createQuery"; // SQLクエリを作成するAPI関数
-import { createAssistant } from "../utils/createAssistant"; // Assistantを作成するAPI関数
-import { createThread } from "../utils/createThread"; // Threadを作成するAPI関数
-import { runThread } from "../utils/runThread"; // Threadを実行するAPI関数
 
-export const loader = async ({ params, request }: LoaderFunctionArgs) => {
+let resource:string|null="mysql";
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
-    const tableInfo = await getTableInfo(); // getTableInfo を呼び出し
-    console.log("get tableInfo : "+JSON.stringify(tableInfo, null, 2));
+    const url = new URL(request.url);
+    resource = url.searchParams.get('resource');
+
+    console.log("makeThread");
+
+    const response = await fetch("http://localhost:4000/makeThread", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({resource}),
+    });
+    const data = await response.json();
     
-    const assistantId = await createAssistant(JSON.stringify(tableInfo, null, 2)); // Assistantを作成
-    console.log("create assistantId : "+assistantId);
+    if(response.ok){
+      const threadId = data.threadId;
+      const firstResponse = data.insertedInfo;
+      console.log("makeThread OK!");
+      return json( {threadId, firstResponse}); // 結果を返す
+    }else{
+      console.log("makeThread failed!");
+      return json({ error: data.error}, { status: 500 }); // エラー時のレスポンス
+    }
 
-    const threadId = await createThread(); // Threadを作成
-    console.log("create threadId : "+threadId);
-
-    return json({assistantId, threadId}); // 結果を返す
   } catch (error : unknown) {
     if (error instanceof Error) {
-      //console.log("error : "+error.message);
       return json({ error: error.message }, { status: 500 }); // エラー時のレスポンス
     }else{
-      //console.log("error : unknown");
       return json({ error: "An unknown error occurred." }, { status: 500 }); // エラー時のレスポンス
     }
   }
@@ -35,86 +43,167 @@ export const loader = async ({ params, request }: LoaderFunctionArgs) => {
 type Message = {
   text: string;
   fromUser: boolean;
+  type: number;//0:from User 1:from ai (sql) 2:from ai (message) 3:from db
+  isError : boolean;
 };
 
 export default function ChatApp() {
-  const id = useLoaderData<{ assistantId: any; threadId: any }>(); // loaderから返されたデータを取得
-  //console.log("assistantId : "+id.assistantId);
-  //console.log("threadId : "+id.threadId);
-  
+  const loaderData = useLoaderData<{ threadId: string; firstResponse: string }>(); // loaderから返されたデータを取得
+  const threadId = loaderData.threadId;
+  const firstResponse = loaderData.firstResponse;
+  const firstMessage: Message = { text: firstResponse, fromUser: true ,type: 2, isError:false};
+
   const [userMessage, setUserMessage] = useState<string>(""); // ユーザーの入力メッセージ
-  const [messages, setMessages] = useState<Message[]>([]); // メッセージ履歴
-  const [error, setError] = useState<string | null>(null); // エラーメッセージ
+  const [messages, setMessages] = useState<Message[]>([firstMessage]); // メッセージ履歴
+  const [error, setError] = useState<string | null>(null); // エラーメッセージ TODO:loaderでのエラーもここに
+  const [status, setStatus]= useState<string>("");
 
-  //const table = useLoaderData(); // loaderから返されたデータを取得
-  // データ取得後にstateを更新する
-  /*
-  useEffect(() => {
-    if (tableInfo) {
-      const tableMessage: Message = { text: 'table Information', fromUser: true };
-      const tableInfoMessage: Message = { text: JSON.stringify(tableInfo), fromUser: false };
-      setMessages([...messages, tableMessage, tableInfoMessage]);
-    }
-  }, [tableInfo]); // tableが変化するたびに実行
-  */
+  // SQL生成のハンドラ
+  const createSQL = async () => {
+    setStatus("running...");
 
-  // メッセージ送信のハンドラ
-  const handleSend = async () => {
-    if (id.assistantId==null || id.threadId==null) return; // テーブル情報が取得されていない場合は何もしない
-    if (!userMessage.trim()) return; // 空のメッセージを送信しない
-
-    const newMessage: Message = { text: userMessage, fromUser: true };
+    const newMessage: Message = { text: userMessage, fromUser: true ,type: 0, isError:false};
     setMessages([...messages, newMessage]); // ユーザーのメッセージを追加
-
     try {
-        const query = await runThread(userMessage, id.assistantId, id.threadId); // SQLクエリを作成
-        console.log("query : "+query);
-        const queryStr:string = query.replace(/^"(.*)"$/, "$1"); // 先頭と末尾の `"` を削除;
-        const queryMessage: Message = { text: queryStr, fromUser: false };
+        //const sql = await runThread(userMessage); // SQLクエリを作成
+        const questionText = userMessage;
+        const response = await fetch("http://localhost:4000/textToSQL", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ questionText,threadId }),
+        });
+        const data = await response.json();
+        if(!response.ok){
+          throw new Error(data.error || "Failed to text to sql.");
+        }
+        const sql = data.sql;
+        console.log("sql : "+sql);
+        const queryStr:string = sql.replace(/^"(.*)"$/, "$1"); // 先頭と末尾の `"` を削除;
+        const queryMessage: Message = { text: queryStr, fromUser: false, type:1, isError:false};
         setMessages([...messages, newMessage, queryMessage]); // 作成したクエリを追加
         setError(null);
-
-        try {
-            // SQLクエリをAPIに送信
-            const data = await runQuery(queryMessage.text);
-            const botMessage: Message = { text: JSON.stringify(data, null, 2), fromUser: false };
-            
-            setMessages([...messages, newMessage, queryMessage, botMessage]); // ユーザーとボットのメッセージを追加
-            setError(null);
-        } catch (err: unknown) {
-            // `err`の型が`unknown`であるため、型ガードを使用して安全にアクセス
-            if (err instanceof Error) {
-                setError(err.message); // エラーメッセージを設定
-                const botMessage: Message = { text: `Error: ${err.message}`, fromUser: false };
-                setMessages([...messages, newMessage, queryMessage, botMessage]); // ユーザーとエラーメッセージを表示
-            } else {
-                setError("An unknown error occurred.");
-            }
-        }
 
         setUserMessage(""); // 入力欄を空にする
     } catch (err: unknown) {
         // `err`の型が`unknown`であるため、型ガードを使用して安全にアクセス
         if (err instanceof Error) {
             setError(err.message); // エラーメッセージを設定
-            const queryMessage: Message = { text: `Error: ${err.message}`, fromUser: false };
-            setMessages([...messages, newMessage, queryMessage]); // ユーザーとエラーメッセージを表示
+            const queryMessage: Message = { text: `Error: ${err.message}`, fromUser: false ,type:1, isError:true};
+            setMessages([...messages, queryMessage]); // ユーザーとエラーメッセージを表示
         } else {
             setError("An unknown error occurred.");
         }
+    }finally{
+      setStatus("");
+    }
+  };
+
+  // SQL実行のハンドラ
+  const runSQL = async () => {
+    setStatus("running...");
+
+    try {
+        //sqlを検索
+        let sql="";
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].type==1 && !messages[i].isError) {
+            sql=messages[i].text;
+            break;
+          }
+        }
+        if(sql==""){
+          throw new Error("sql is not Found!");
+        }
+        const response = await fetch("http://localhost:4000/answer", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ sql, threadId, resource }),
+        });
+        const data = await response.json();
+        if(!response.ok){
+          throw new Error(data.error || "Failed to run sql.");
+        }
+        const result = data.result;
+        console.log("result : "+result);
+        const resultMessage: Message = { text: result, fromUser: false , type: 3, isError:false};
+        //setMessages([...messages,  resultMessage]); // 作成したクエリを追加
+        const answer = data.answer;
+        console.log("answer : "+answer);
+        const answerMessage: Message = { text: answer, fromUser: false , type: 2, isError:false};
+        setMessages([...messages,  resultMessage, answerMessage]); // 作成したクエリを追加
+        setError(null);
+
+        setUserMessage(""); // 入力欄を空にする
+    } catch (err: unknown) {
+        // `err`の型が`unknown`であるため、型ガードを使用して安全にアクセス
+        if (err instanceof Error) {
+            setError(err.message); // エラーメッセージを設定
+            const resultMessage: Message = { text: `Error: ${err.message}`, fromUser: false, type:3, isError:true };
+            setMessages([...messages, resultMessage]); // ユーザーとエラーメッセージを表示
+        } else {
+            setError("An unknown error occurred.");
+        }
+    }finally{
+      setStatus("");
+    }
+  };
+
+  // 通常質問のハンドラ
+  const normalQuestion = async () => {
+    setStatus("running...");
+
+    const newMessage: Message = { text: userMessage, fromUser: true ,type: 0, isError:false};
+    setMessages([...messages, newMessage]); // ユーザーのメッセージを追加
+    try {
+        //const sql = await runThread(userMessage); // SQLクエリを作成
+        const questionText = userMessage;
+        const response = await fetch("http://localhost:4000/normalQuestion", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ questionText, threadId }),
+        });
+        const data = await response.json();
+        if(!response.ok){
+          throw new Error(data.error || "Failed to text to sql.");
+        }
+        const answer = data.answer;
+        console.log("answer : "+answer);
+        const answerMessage: Message = { text: answer, fromUser: false, type:2, isError:false};
+        setMessages([...messages, newMessage, answerMessage]); // 作成したクエリを追加
+        setError(null);
+
+        setUserMessage(""); // 入力欄を空にする
+    } catch (err: unknown) {
+        // `err`の型が`unknown`であるため、型ガードを使用して安全にアクセス
+        if (err instanceof Error) {
+            setError(err.message); // エラーメッセージを設定
+            const answerMessage: Message = { text: `Error: ${err.message}`, fromUser: false ,type:1, isError:true};
+            setMessages([...messages, newMessage, answerMessage]); // ユーザーとエラーメッセージを表示
+        } else {
+            setError("An unknown error occurred.");
+        }
+    }finally{
+      setStatus("");
     }
   };
 
   return (
-    <div style={{ maxWidth: "600px", margin: "0 auto", padding: "20px" }}>
-      <h1>Chat App</h1>
+    <div style={{ maxWidth: "1000px", margin: "0 auto", padding: "20px" }}>
+      <h1>SQL Generator</h1>
 
       <div
         style={{
           border: "1px solid #ddd",
           borderRadius: "8px",
           padding: "10px",
-          maxHeight: "400px",
+          maxHeight: "600px",
+          minHeight: "600px",
           overflowY: "auto",
           marginBottom: "20px",
         }}
@@ -123,7 +212,7 @@ export default function ChatApp() {
           <div
             key={index}
             style={{
-              textAlign: message.fromUser ? "right" : "left",
+              textAlign: message.type==0 ? "right" : "left",
               margin: "10px 0",
             }}
           >
@@ -132,11 +221,11 @@ export default function ChatApp() {
                 display: "inline-block",
                 padding: "10px",
                 borderRadius: "10px",
-                backgroundColor: message.fromUser ? "#a5d6a7" : "#e1f5fe",
-                maxWidth: "80%",
+                backgroundColor: message.isError ? "#ff6347": message.type==0 ? "#f5f5f5" : message.type==2 ? "#a5d6a7":message.type==3 ? "#f0e68c":"#e1f5fe",
+                //maxWidth: "80%",
               }}
             >
-              {message.text}
+              <pre>{message.text}</pre>
             </p>
           </div>
         ))}
@@ -153,9 +242,9 @@ export default function ChatApp() {
         style={{ width: "100%", padding: "10px", borderRadius: "5px", border: "1px solid #ddd" }}
       />
       <button
-        onClick={handleSend}
+        onClick={createSQL}
         style={{
-          width: "100%",
+          width: "20%",
           padding: "10px",
           borderRadius: "5px",
           backgroundColor: "#4caf50",
@@ -165,8 +254,41 @@ export default function ChatApp() {
           marginTop: "10px",
         }}
       >
-        Send
+        Convert SQL
       </button>
+      <button
+        onClick={runSQL}
+        style={{
+          width: "20%",
+          padding: "10px",
+          borderRadius: "5px",
+          backgroundColor: "#4caf50",
+          color: "white",
+          border: "none",
+          cursor: "pointer",
+          marginTop: "10px",
+          marginLeft: "1%"
+        }}
+      >
+        Run SQL
+      </button>
+      <button
+        onClick={normalQuestion}
+        style={{
+          width: "20%",
+          padding: "10px",
+          borderRadius: "5px",
+          backgroundColor: "#4caf50",
+          color: "white",
+          border: "none",
+          cursor: "pointer",
+          marginTop: "10px",
+          marginLeft: "1%"
+        }}
+      >
+        Question
+      </button>
+      <p>{status}</p>
     </div>
   );
 }
