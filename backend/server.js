@@ -2,6 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const {getDbInformation} = require('./dbInformation');
 const {getMySQLMetaData, runMySQL} = require('./mysqlAccess');
+const {getPostgreSQLMetaData, runPostgreSQL} = require('./postgreSQLAccess');
+const {getMSSQLMetaData, runMSSQL} = require('./mssqlAccess ');
 const {createThread, runThread} = require('./aiAssistant');
 
 const app = express();
@@ -19,13 +21,31 @@ app.post("/makeThread", async (req, res) => {
     console.log("dbInfo");
     console.log(dbInfo);
     switch(dbInfo.type){
+      
       case 'MySQL':
-        const metaData = await getMySQLMetaData(dbInfo);
+        const mysqlMetaData = await getMySQLMetaData(dbInfo);
         console.log("MetaData");
-        console.log(metaData);
-        const insertedInfo = await runThread('DataBase: DataBaseType is MySQL. context is '+metaData, threadID);
-        res.json({success:true, threadId:threadID, insertedInfo: insertedInfo});
+        console.log(mysqlMetaData);
+        const mysqlInsertedInfo = await runThread('DataBase: DataBaseType is MySQL. context is '+mysqlMetaData, threadID);
+        res.json({success:true, threadId:threadID, insertedInfo: mysqlInsertedInfo});
         break;
+
+      case 'PostgreSQL':
+          const postgresMetaData = await getPostgreSQLMetaData(dbInfo);
+          console.log("MetaData");
+          console.log(postgresMetaData);
+          const postgresInsertedInfo = await runThread('DataBase: DataBaseType is PostgreSQL. context is '+postgresMetaData, threadID);
+          res.json({success:true, threadId:threadID, insertedInfo: postgresInsertedInfo});
+          break;
+
+      case 'Microsoft SQL Server':
+        const mssqlMetaData = await getMSSQLMetaData(dbInfo);
+        console.log("MetaData");
+        console.log(mssqlMetaData);
+        const mssqlInsertedInfo = await runThread('DataBase: DataBaseType is Microsoft SQL Server. context is '+mssqlMetaData, threadID);
+        res.json({success:true, threadId:threadID, insertedInfo: mssqlInsertedInfo});
+        break;
+
       default:
         res.status(500).json({ success: false, error: 'dbType is not correct!' });
         break;
@@ -53,14 +73,34 @@ app.post("/answer", async (req, res) => {
     console.log(sql);
     const dbInfo = getDbInformation(resource);
     switch(dbInfo.type){
+
       case 'MySQL':
-        const result = await runMySQL(sql,dbInfo);
+        const mysqlResult = await runMySQL(sql,dbInfo);
         console.log("result");
-        console.log(result);
-        const answer = await runThread('Answer:'+result, threadId);
-        console.log(answer);
-        res.json({ success:true, result:result, answer:answer});
+        console.log(mysqlResult);
+        const mysqlAnswer = await runThread('Answer:'+mysqlResult, threadId);
+        console.log(mysqlAnswer);
+        res.json({ success:true, result:mysqlResult, answer:mysqlAnswer});
         break;
+      
+      case 'PostgreSQL':
+        const postgresResult = await runPostgreSQL(sql,dbInfo);
+        console.log("result");
+        console.log(postgresResult);
+        const postgresAnswer = await runThread('Answer:'+postgresResult, threadId);
+        console.log(postgresAnswer);
+        res.json({ success:true, result:postgresResult, answer:postgresAnswer});
+        break;
+
+      case 'Microsoft SQL Server':
+        const mssqlResult = await runMSSQL(sql,dbInfo);
+        console.log("result");
+        console.log(mssqlResult);
+        const mssqlAnswer = await runThread('Answer:'+mssqlResult, threadId);
+        console.log(mssqlAnswer);
+        res.json({ success:true, result:mssqlResult, answer:mssqlAnswer});
+        break;
+      
       default:
         res.status(500).json({ success: false, error: 'dbType is not correct!' });
         break;
