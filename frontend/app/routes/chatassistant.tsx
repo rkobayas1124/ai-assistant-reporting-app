@@ -2,12 +2,12 @@ import { useState} from "react";
 import { json, LoaderFunctionArgs } from "@remix-run/node";
 import { useLoaderData } from "@remix-run/react";
 
-let resource:string|null="mysql";
+//let resource:string|null="mysql";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const url = new URL(request.url);
-    resource = url.searchParams.get('resource');
+    const resource = url.searchParams.get('resource');
 
     console.log("makeThread");
 
@@ -24,7 +24,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       const threadId = data.threadId;
       const firstResponse = data.insertedInfo;
       console.log("makeThread OK!");
-      return json( {threadId, firstResponse}); // 結果を返す
+      return json( {threadId, firstResponse, resource}); // 結果を返す
     }else{
       console.log("makeThread failed!");
       return json({ error: data.error}, { status: 500 }); // エラー時のレスポンス
@@ -48,9 +48,10 @@ type Message = {
 };
 
 export default function ChatApp() {
-  const loaderData = useLoaderData<{ threadId: string; firstResponse: string }>(); // loaderから返されたデータを取得
+  const loaderData = useLoaderData<{ threadId: string; firstResponse: string; resource: string; }>(); // loaderから返されたデータを取得
   const threadId = loaderData.threadId;
   const firstResponse = loaderData.firstResponse;
+  const resource = loaderData.resource;
   const firstMessage: Message = { text: firstResponse, fromUser: true ,type: 2, isError:false};
 
   const [userMessage, setUserMessage] = useState<string>(""); // ユーザーの入力メッセージ
@@ -244,7 +245,7 @@ export default function ChatApp() {
       <button
         onClick={createSQL}
         style={{
-          width: "20%",
+          width: "30%",
           padding: "10px",
           borderRadius: "5px",
           backgroundColor: "#4caf50",
@@ -259,7 +260,7 @@ export default function ChatApp() {
       <button
         onClick={runSQL}
         style={{
-          width: "20%",
+          width: "30%",
           padding: "10px",
           borderRadius: "5px",
           backgroundColor: "#4caf50",
@@ -267,7 +268,7 @@ export default function ChatApp() {
           border: "none",
           cursor: "pointer",
           marginTop: "10px",
-          marginLeft: "1%"
+          marginLeft: "5%"
         }}
       >
         Run SQL
@@ -275,7 +276,7 @@ export default function ChatApp() {
       <button
         onClick={normalQuestion}
         style={{
-          width: "20%",
+          width: "30%",
           padding: "10px",
           borderRadius: "5px",
           backgroundColor: "#4caf50",
@@ -283,7 +284,7 @@ export default function ChatApp() {
           border: "none",
           cursor: "pointer",
           marginTop: "10px",
-          marginLeft: "1%"
+          marginLeft: "5%"
         }}
       >
         Question
